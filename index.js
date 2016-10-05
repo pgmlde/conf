@@ -27,14 +27,14 @@ class Conf {
 
 		opts = Object.assign({
 			configName: 'config',
-			configPrefix: 'json'
+			configExtension: 'json'
 		}, opts);
 
 		if (!opts.cwd) {
 			opts.cwd = envPaths(opts.projectName).config;
 		}
 
-		this.path = path.resolve(opts.cwd, `${opts.configName}.${opts.configPrefix}`);
+		this.path = path.resolve(opts.cwd, `${opts.configName}.${opts.configExtension}`);
 		this.store = Object.assign(obj(), opts.defaults, this.store);
 	}
 	get(key) {
