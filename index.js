@@ -37,7 +37,10 @@ class Conf {
 		this.path = path.resolve(opts.cwd, `${opts.configName}.${opts.configExtension}`);
 		this.store = Object.assign(obj(), opts.defaults, this.store);
 	}
-	get(key) {
+	get(key, defaultValue) {
+		if (typeof dotProp.get(this.store, key) === 'undefined' && typeof defaultValue !== 'undefined') {
+			return defaultValue;
+		}
 		return dotProp.get(this.store, key);
 	}
 	set(key, val) {
