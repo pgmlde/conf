@@ -1,18 +1,21 @@
+import fs from 'fs';
 import path from 'path';
 import {serial as test} from 'ava';
-import tempfile from 'tempfile';
+import tempy from 'tempy';
 import del from 'del';
 import pkgUp from 'pkg-up';
-import Conf from './';
+import clearModule from 'clear-module';
+import Conf from '.';
 
 const fixture = '🦄';
 
 test.beforeEach(t => {
-	t.context.conf = new Conf({cwd: tempfile()});
+	t.context.conf = new Conf({cwd: tempy.directory()});
 });
 
 test('.get()', t => {
 	t.is(t.context.conf.get('foo'), undefined);
+	t.is(t.context.conf.get('foo', '🐴'), '🐴');
 	t.context.conf.set('foo', fixture);
 	t.is(t.context.conf.get('foo'), fixture);
 });
@@ -98,7 +101,7 @@ test('.store', t => {
 
 test('`defaults` option', t => {
 	const conf = new Conf({
-		cwd: tempfile(),
+		cwd: tempy.directory(),
 		defaults: {
 			foo: 'bar'
 		}
@@ -110,7 +113,7 @@ test('`defaults` option', t => {
 test('`configName` option', t => {
 	const configName = 'alt-config';
 	const conf = new Conf({
-		cwd: tempfile(),
+		cwd: tempy.directory(),
 		configName
 	});
 	t.is(conf.get('foo'), undefined);
@@ -130,7 +133,7 @@ test('`projectName` option', t => {
 });
 
 test('ensure `.store` is always an object', t => {
-	const cwd = tempfile();
+	const cwd = tempy.directory();
 	const conf = new Conf({cwd});
 	del.sync(cwd, {force: true});
 	t.notThrows(() => conf.get('foo'));
@@ -153,7 +156,7 @@ test('automatic `projectName` inference', t => {
 });
 
 test('`cwd` option overrides `projectName` option', t => {
-	const cwd = tempfile();
+	const cwd = tempy.directory();
 
 	let conf;
 	t.notThrows(() => {
@@ -189,6 +192,101 @@ test('handle `cwd` being set and `projectName` not being set', t => {
 		conf = new Conf({cwd: 'conf-fixture-cwd'});
 	});
 
-	del.sync(conf.path, {force: true});
+	del.sync(path.dirname(conf.path));
 	pkgUp.sync = pkgUpSyncOrig;
+});
+
+// See #11
+test('fallback to cwd if `module.filename` is `null`', t => {
+	const preservedFilename = module.filename;
+	module.filename = null;
+	clearModule('.');
+
+	let conf;
+	t.notThrows(() => {
+		const Conf = require('.');
+		conf = new Conf({cwd: 'conf-fixture-fallback-module-filename-null'});
+	});
+
+	module.filename = preservedFilename;
+	del.sync(path.dirname(conf.path));
+});
+
+test('encryption', t => {
+	const conf = new Conf({cwd: tempy.directory(), encryptionKey: 'abc123'});
+	t.is(conf.get('foo'), undefined);
+	t.is(conf.get('foo', '🐴'), '🐴');
+	conf.set('foo', fixture);
+	conf.set('baz.boo', fixture);
+	t.is(conf.get('foo'), fixture);
+	t.is(conf.get('baz.boo'), fixture);
+});
+
+test('encryption - upgrade', t => {
+	const cwd = tempy.directory();
+
+	const before = new Conf({cwd});
+	before.set('foo', fixture);
+	t.is(before.get('foo'), fixture);
+
+	const after = new Conf({cwd, encryptionKey: 'abc123'});
+	t.is(after.get('foo'), fixture);
+});
+
+test('encryption - corrupt file', t => {
+	const cwd = tempy.directory();
+
+	const before = new Conf({cwd, encryptionKey: 'abc123'});
+	before.set('foo', fixture);
+	t.is(before.get('foo'), fixture);
+
+	fs.appendFileSync(path.join(cwd, 'config.json'), 'corrupt file');
+
+	const after = new Conf({cwd, encryptionKey: 'abc123'});
+	t.is(after.get('foo'), undefined);
+});
+
+test('onDidChange()', t => {
+	const conf = t.context.conf;
+
+	t.plan(8);
+
+	const checkFoo = (newValue, oldValue) => {
+		t.is(newValue, '🐴');
+		t.is(oldValue, fixture);
+	};
+
+	const checkBaz = (newValue, oldValue) => {
+		t.is(newValue, '🐴');
+		t.is(oldValue, fixture);
+	};
+
+	conf.set('foo', fixture);
+	let unsubscribe = conf.onDidChange('foo', checkFoo);
+	conf.set('foo', '🐴');
+	unsubscribe();
+	conf.set('foo', fixture);
+
+	conf.set('baz.boo', fixture);
+	unsubscribe = conf.onDidChange('baz.boo', checkBaz);
+	conf.set('baz.boo', '🐴');
+	unsubscribe();
+	conf.set('baz.boo', fixture);
+
+	const checkUndefined = (newValue, oldValue) => {
+		t.is(oldValue, fixture);
+		t.is(newValue, undefined);
+	};
+	const checkSet = (newValue, oldValue) => {
+		t.is(oldValue, undefined);
+		t.is(newValue, '🐴');
+	};
+
+	unsubscribe = conf.onDidChange('foo', checkUndefined);
+	conf.delete('foo');
+	unsubscribe();
+	unsubscribe = conf.onDidChange('foo', checkSet);
+	conf.set('foo', '🐴');
+	unsubscribe();
+	conf.set('foo', fixture);
 });

@@ -4,11 +4,13 @@
 
 All you have to care about is what to persist. This module will handle all the dull details like where and how.
 
+*If you need this for Electron, check out [`electron-store`](https://github.com/sindresorhus/electron-store) instead.*
+
 
 ## Install
 
 ```
-$ npm install --save conf
+$ npm install conf
 ```
 
 
@@ -22,7 +24,7 @@ config.set('unicorn', '🦄');
 console.log(config.get('unicorn'));
 //=> '🦄'
 
-// use dot-notation to access nested properties
+// Use dot-notation to access nested properties
 config.set('foo.bar', true);
 console.log(config.get('foo'));
 //=> {bar: true}
@@ -32,10 +34,12 @@ console.log(config.get('unicorn'));
 //=> undefined
 ```
 
-Or [create a subclass](https://github.com/sindresorhus/electron-config/blob/master/index.js).
+Or [create a subclass](https://github.com/sindresorhus/electron-store/blob/master/index.js).
 
 
 ## API
+
+Changes are written to disk atomically, so if the process crashes during a write, it will not corrupt the existing config.
 
 ### Conf([options])
 
@@ -61,7 +65,7 @@ Useful if you need multiple config files for your app or module. For example, di
 #### projectName
 
 Type: `string`<br>
-Default: The `name` field in your package.json
+Default: The `name` field in the package.json closest to where `conf` is imported.
 
 You only need to specify this if you don't have a package.json file in your project.
 
@@ -70,11 +74,24 @@ You only need to specify this if you don't have a package.json file in your proj
 Type: `string`<br>
 Default: System default [user config directory](https://github.com/sindresorhus/env-paths#pathsconfig)
 
-**You most likely don't need this.**
+**You most likely don't need this. Please don't use it unless you really have to.**
 
 Overrides `projectName`.
 
 The only use-case I can think of is having the config located in the app directory or on some external storage.
+
+#### encryptionKey
+
+Type: `string` `Buffer` `TypedArray` `DataView`<br>
+Default: `undefined`
+
+Note that this is **not intended for security purposes**, since the encryption key would be easily found inside a plain-text Node.js app.
+
+Its main use is for obscurity. If a user looks through the config directory and finds the config file, since it's just a JSON file, they may be tempted to modify it. By providing an encryption key, the file will be obfuscated, which should hopefully deter any users from doing so.
+
+It also has the added bonus of ensuring the config file's integrity. If the file is changed in any way, the decryption will not work, in which case the store will just reset back to its default state.
+
+When specified, the store will be encrypted using the [`aes-256-cbc`](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation) encryption algorithm.
 
 ### Instance
 
@@ -86,13 +103,15 @@ The instance is [`iterable`](https://developer.mozilla.org/en/docs/Web/JavaScrip
 
 Set an item.
 
+The `value` must be JSON serializable.
+
 #### .set(object)
 
 Set multiple items at once.
 
-#### .get(key)
+#### .get(key, [defaultValue])
 
-Get an item.
+Get an item or `defaultValue` if the item does not exist.
 
 #### .has(key)
 
@@ -105,6 +124,12 @@ Delete an item.
 #### .clear()
 
 Delete all items.
+
+#### .onDidChange(key, callback)
+
+`callback`: `(newValue, oldValue) => {}`
+
+Watches the given `key`, calling `callback` on any changes. When a key is first set `oldValue` will be `undefined`, and when a key is deleted `newValue` will be `undefined`.
 
 #### .size
 
@@ -135,7 +160,8 @@ I'm also the author of `configstore`. While it's pretty good, I did make some mi
 
 ## Related
 
-- [electron-config](https://github.com/sindresorhus/electron-config) - Simple config handling for your Electron app or module
+- [electron-store](https://github.com/sindresorhus/electron-store) - Simple data persistence for your Electron app or module
+- [cache-conf](https://github.com/SamVerschueren/cache-conf) - Simple cache config handling for your app or module
 
 
 ## License

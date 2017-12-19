@@ -1,23 +1,27 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const assert = require('assert');
+const EventEmitter = require('events');
 const dotProp = require('dot-prop');
-const mkdirp = require('mkdirp');
+const makeDir = require('make-dir');
 const pkgUp = require('pkg-up');
 const envPaths = require('env-paths');
+const writeFileAtomic = require('write-file-atomic');
 
 const obj = () => Object.create(null);
 
-// prevent caching of this module so module.parent is always accurate
+// Prevent caching of this module so module.parent is always accurate
 delete require.cache[__filename];
-const parentDir = path.dirname(module.parent.filename);
+const parentDir = path.dirname((module.parent && module.parent.filename) || '.');
 
 class Conf {
 	constructor(opts) {
 		const pkgPath = pkgUp.sync(parentDir);
 
 		opts = Object.assign({
-			// if the package.json was not found, avoid breaking with `require(null)`
+			// If the package.json was not found, avoid breaking with `require(null)`
 			projectName: pkgPath && require(pkgPath).name
 		}, opts);
 
@@ -34,6 +38,8 @@ class Conf {
 			opts.cwd = envPaths(opts.projectName).config;
 		}
 
+		this.events = new EventEmitter();
+		this.encryptionKey = opts.encryptionKey;
 		this.path = path.resolve(opts.cwd, `${opts.configName}.${opts.configExtension}`);
 		this.store = Object.assign(obj(), opts.defaults, this.store);
 	}
@@ -41,7 +47,7 @@ class Conf {
 		if (typeof dotProp.get(this.store, key) === 'undefined' && typeof defaultValue !== 'undefined') {
 			return defaultValue;
 		}
-		return dotProp.get(this.store, key);
+		return dotProp.get(this.store, key, defaultValue);
 	}
 	set(key, val) {
 		if (typeof key !== 'string' && typeof key !== 'object') {
@@ -51,9 +57,9 @@ class Conf {
 		const store = this.store;
 
 		if (typeof key === 'object') {
-			Object.keys(key).forEach(k => {
+			for (const k of Object.keys(key)) {
 				dotProp.set(store, k, key[k]);
-			});
+			}
 		} else {
 			dotProp.set(store, key, val);
 		}
@@ -71,15 +77,50 @@ class Conf {
 	clear() {
 		this.store = obj();
 	}
+	onDidChange(key, callback) {
+		if (typeof key !== 'string') {
+			throw new TypeError(`Expected \`key\` to be of type \`string\`, got ${typeof key}`);
+		}
+
+		if (typeof callback !== 'function') {
+			throw new TypeError(`Expected \`callback\` to be of type \`function\`, got ${typeof callback}`);
+		}
+
+		let currentValue = this.get(key);
+
+		const onChange = () => {
+			const oldValue = currentValue;
+			const newValue = this.get(key);
+
+			try {
+				assert.deepEqual(newValue, oldValue);
+			} catch (err) {
+				currentValue = newValue;
+				callback.call(this, newValue, oldValue);
+			}
+		};
+
+		this.events.on('change', onChange);
+		return () => this.events.removeListener('change', onChange);
+	}
 	get size() {
 		return Object.keys(this.store).length;
 	}
 	get store() {
 		try {
-			return Object.assign(obj(), JSON.parse(fs.readFileSync(this.path, 'utf8')));
+			let data = fs.readFileSync(this.path, this.encryptionKey ? null : 'utf8');
+
+			if (this.encryptionKey) {
+				try {
+					const decipher = crypto.createDecipher('aes-256-cbc', this.encryptionKey);
+					data = Buffer.concat([decipher.update(data), decipher.final()]);
+				} catch (err) {/* ignore */}
+			}
+
+			return Object.assign(obj(), JSON.parse(data));
 		} catch (err) {
 			if (err.code === 'ENOENT') {
-				mkdirp.sync(path.dirname(this.path));
+				makeDir.sync(path.dirname(this.path));
 				return obj();
 			}
 
@@ -91,13 +132,20 @@ class Conf {
 		}
 	}
 	set store(val) {
-		// ensure the directory exists as it
-		// could have been deleted in the meantime
-		mkdirp.sync(path.dirname(this.path));
+		// Ensure the directory exists as it could have been deleted in the meantime
+		makeDir.sync(path.dirname(this.path));
 
-		fs.writeFileSync(this.path, JSON.stringify(val, null, '\t'));
+		let data = JSON.stringify(val, null, '\t');
+
+		if (this.encryptionKey) {
+			const cipher = crypto.createCipher('aes-256-cbc', this.encryptionKey);
+			data = Buffer.concat([cipher.update(Buffer.from(data)), cipher.final()]);
+		}
+
+		writeFileAtomic.sync(this.path, data);
+		this.events.emit('change');
 	}
-	// TODO: use `Object.entries()` here at some point
+	// TODO: Use `Object.entries()` here at some point
 	* [Symbol.iterator]() {
 		const store = this.store;
 
